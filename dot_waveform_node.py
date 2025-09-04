@@ -86,8 +86,8 @@ class DottedWaveformVisualizer:
                     "tooltip": "Hex color for background. Examples: #000000 (black), #FFFFFF (white), #333333 (dark gray)"
                 }),
                 
-                "animation_style": (["scrolling", "breathing", "radial", "bars", "wave"], {
-                    "tooltip": "Choose animation style. SCROLLING: Continuous waveform. BREATHING: Pulsing dots. RADIAL: Expanding rings. BARS: Frequency bars. WAVE: Sine wave patterns."
+                "animation_style": (["scrolling", "breathing", "radial", "bars", "wave", "spectrum"], {
+                    "tooltip": "Choose animation style. SCROLLING: Continuous waveform. BREATHING: Pulsing dots. RADIAL: Expanding rings. BARS: Frequency bars. WAVE: Sine wave patterns. SPECTRUM: FFT frequency analysis bars (like equalizer)."
                 }),
                 "max_height": ("INT", {
                     "default": 60,
@@ -298,6 +298,60 @@ class DottedWaveformVisualizer:
         except Exception as e:
             print(f"Audio analysis error: {e}")
             return [0.5] * 10
+
+    def analyze_audio_fft(self, audio_data: np.ndarray, sample_rate: int, fps: int, num_bands: int = 32) -> List[List[float]]:
+        try:
+            frame_duration = 1.0 / fps
+            samples_per_frame = int(sample_rate * frame_duration)
+            total_frames = len(audio_data) // samples_per_frame
+            
+            spectrum_frames = []
+            
+            for i in range(total_frames):
+                start_idx = i * samples_per_frame
+                end_idx = min(start_idx + samples_per_frame, len(audio_data))
+                frame_data = audio_data[start_idx:end_idx]
+                
+                if len(frame_data) > 0:
+                    # Apply window function to reduce spectral leakage
+                    windowed = frame_data * np.hanning(len(frame_data))
+                    
+                    # Compute FFT
+                    fft = np.fft.rfft(windowed)
+                    magnitude = np.abs(fft)
+                    
+                    # Split into frequency bands
+                    bands_per_bin = len(magnitude) // num_bands
+                    if bands_per_bin < 1:
+                        bands_per_bin = 1
+                    
+                    band_magnitudes = []
+                    for band in range(num_bands):
+                        start_bin = band * bands_per_bin
+                        end_bin = min(start_bin + bands_per_bin, len(magnitude))
+                        if start_bin < len(magnitude):
+                            band_mag = np.mean(magnitude[start_bin:end_bin])
+                            band_magnitudes.append(band_mag)
+                        else:
+                            band_magnitudes.append(0.0)
+                    
+                    spectrum_frames.append(band_magnitudes)
+                else:
+                    spectrum_frames.append([0.0] * num_bands)
+            
+            # Normalize each frequency band independently
+            if len(spectrum_frames) > 0:
+                for band_idx in range(num_bands):
+                    band_values = [frame[band_idx] for frame in spectrum_frames]
+                    max_val = max(band_values) if max(band_values) > 0 else 1.0
+                    for frame_idx in range(len(spectrum_frames)):
+                        spectrum_frames[frame_idx][band_idx] /= max_val
+            
+            return spectrum_frames
+            
+        except Exception as e:
+            print(f"FFT analysis error: {e}")
+            return [[0.5] * num_bands for _ in range(10)]
 
     def create_dotted_waveform(self, amplitude: float, width: int, height: int, 
                              size: int, spacing: int, max_height: int, 
@@ -738,6 +792,82 @@ class DottedWaveformVisualizer:
         
         return frames
 
+    def generate_spectrum_animation(self, audio_np, sample_rate, width, height, size, spacing, 
+                                  max_height, fps, dot_color, bg_color, opacity_mode, max_frames):
+        # Calculate number of frequency bands based on spacing
+        num_bands = width // spacing
+        if num_bands > 64:  # Cap at 64 bands for performance
+            num_bands = 64
+        elif num_bands < 8:  # Minimum 8 bands
+            num_bands = 8
+            
+        spectrum_frames = self.analyze_audio_fft(audio_np, sample_rate, fps, num_bands)
+        
+        if max_frames > 0:
+            spectrum_frames = spectrum_frames[:max_frames]
+        
+        frames = []
+        total_frames = len(spectrum_frames)
+        print(f"Generating {total_frames} spectrum frames with {num_bands} frequency bands...")
+        pbar = ProgressBar(total_frames)
+        
+        center_y = height // 2
+        max_vis_height = (height * max_height) // 200
+        
+        for frame_i, spectrum_data in enumerate(spectrum_frames):
+            if comfy.model_management.processing_interrupted():
+                print("Spectrum animation cancelled by user")
+                break
+            pbar.update(1)
+            
+            img = Image.new('RGB', (width, height), bg_color)
+            draw = ImageDraw.Draw(img)
+            
+            # Calculate bar width and positions
+            bar_width = width // num_bands
+            
+            for band_idx in range(num_bands):
+                # Get frequency amplitude for this band
+                amplitude = spectrum_data[band_idx]
+                
+                # Calculate bar position (centered)
+                x = (band_idx * bar_width) + (bar_width // 2)
+                if x >= width:
+                    break
+                
+                # Calculate bar height
+                bar_height = int(amplitude * max_vis_height)
+                
+                if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                    levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, amplitude, levels)
+                else:
+                    bar_color = dot_color
+                
+                # Draw mirrored bars (top and bottom)
+                y_start_top = center_y - bar_height
+                y_end_top = center_y
+                y_start_bottom = center_y
+                y_end_bottom = center_y + bar_height
+                
+                if bar_height > 0:
+                    # Use size parameter to control bar thickness
+                    bar_thickness = max(1, min(size, bar_width))
+                    x_left = x - bar_thickness // 2
+                    x_right = x + bar_thickness // 2
+                    
+                    # Draw top bar
+                    if y_start_top >= 0:
+                        draw.rectangle([x_left, y_start_top, x_right, y_end_top], fill=bar_color)
+                    
+                    # Draw bottom bar
+                    if y_end_bottom < height:
+                        draw.rectangle([x_left, y_start_bottom, x_right, y_end_bottom], fill=bar_color)
+            
+            frame_array = np.array(img).astype(np.float32) / 255.0
+            frames.append(torch.from_numpy(frame_array).unsqueeze(0))
+        
+        return frames
 
     def generate_wave_animation(self, audio_np, sample_rate, width, height, size, spacing, 
                               dot_color, bg_color, max_height, fps, max_frames, opacity_mode, **kwargs):
@@ -912,6 +1042,60 @@ class DottedWaveformVisualizer:
                             point_color = wave_colors[wave_idx]
                         
                         draw.ellipse([x-size//2, y-size//2, x+size//2, y+size//2], fill=point_color)
+        
+        elif animation_style == "spectrum":
+            # Preview with fake spectrum data
+            fake_spectrum = []
+            num_bands = width // spacing
+            if num_bands > 64:
+                num_bands = 64
+            elif num_bands < 8:
+                num_bands = 8
+            
+            # Create fake frequency spectrum (bass heavy, mid peaks, treble light)
+            for band in range(num_bands):
+                normalized_freq = band / num_bands
+                if normalized_freq < 0.3:  # Bass frequencies
+                    amplitude = 0.8 - (normalized_freq * 0.4)
+                elif normalized_freq < 0.7:  # Mid frequencies  
+                    amplitude = 0.4 + 0.4 * math.sin(normalized_freq * math.pi * 4)
+                else:  # Treble frequencies
+                    amplitude = 0.3 * (1.0 - normalized_freq)
+                fake_spectrum.append(amplitude)
+            
+            center_y = height // 2
+            max_vis_height = (height * max_height) // 200
+            bar_width = width // num_bands
+            
+            for band_idx in range(num_bands):
+                amplitude = fake_spectrum[band_idx]
+                x = (band_idx * bar_width) + (bar_width // 2)
+                if x >= width:
+                    break
+                
+                bar_height = int(amplitude * max_vis_height)
+                
+                if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                    levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, amplitude, levels)
+                else:
+                    bar_color = dot_color
+                
+                if bar_height > 0:
+                    bar_thickness = max(1, min(size, bar_width))
+                    x_left = x - bar_thickness // 2
+                    x_right = x + bar_thickness // 2
+                    
+                    # Draw mirrored bars
+                    y_start_top = center_y - bar_height
+                    y_end_top = center_y
+                    y_start_bottom = center_y
+                    y_end_bottom = center_y + bar_height
+                    
+                    if y_start_top >= 0:
+                        draw.rectangle([x_left, y_start_top, x_right, y_end_top], fill=bar_color)
+                    if y_end_bottom < height:
+                        draw.rectangle([x_left, y_start_bottom, x_right, y_end_bottom], fill=bar_color)
                         
         else:
             center_x = width // 2
@@ -989,6 +1173,10 @@ class DottedWaveformVisualizer:
                 frames = self.generate_wave_animation(audio_np, sample_rate, width, height,
                                                     size, spacing, final_color, final_bg_color, 
                                                     max_height, fps, max_frames, opacity_mode)
+            elif animation_style == "spectrum":
+                frames = self.generate_spectrum_animation(audio_np, sample_rate, width, height,
+                                                        size, spacing, max_height, fps,
+                                                        final_color, final_bg_color, opacity_mode, max_frames)
             else:
                 # Default to radial for backwards compatibility
                 frames = self.generate_radial_animation(audio_np, sample_rate, width, height,
