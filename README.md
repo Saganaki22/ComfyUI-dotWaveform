@@ -14,7 +14,8 @@ A ComfyUI node that generates animated dotted waveform visualizations from audio
 
 ## ✨ Features
 
-- **Five Animation Styles**: Scrolling, breathing, radial, bars, and wave
+- **Six Animation Styles**: Scrolling, breathing, radial, bars, wave, and spectrum
+- **FFT Spectrum Analysis**: Real-time frequency domain visualization like music equalizers
 - **Teardrop Bars**: Bell curve shape with sharp edges using exponential decay
 - **Audio Passthrough**: Compatible with VideoHelperSuite Video Combine
 - **HD Output**: Up to 1920x1920 resolution support
@@ -48,7 +49,7 @@ A ComfyUI node that generates animated dotted waveform visualizations from audio
 | **spacing** | 3 | 1-40 | Distance between dot/bar centers |
 | **dot_color** | #00FFFF | Hex | Color of waveform elements |
 | **background_color** | #000000 | Hex | Background color |
-| **animation_style** | scrolling | 5 options | Animation type |
+| **animation_style** | scrolling | 6 options | Animation type |
 | **max_height** | 60 | 5-150 | Maximum waveform size as % of image height |
 | **fps** | 10 | 1-60 | Animation frames per second |
 | **max_frames** | 300 | 0-1000 | Frame limit (0 = unlimited) |
@@ -68,6 +69,8 @@ A ComfyUI node that generates animated dotted waveform visualizations from audio
 
 **Wave**: Multiple layered sine wave patterns that morph with audio intensity
 
+**Spectrum**: FFT frequency analysis displaying bass (left) to treble (right) like music equalizers
+
 ## 🎭 Opacity Modes
 
 - **uniform**: All elements same brightness (fastest)
@@ -83,6 +86,14 @@ A ComfyUI node that generates animated dotted waveform visualizations from audio
 - **Output**: RGB image sequences compatible with video nodes
 
 ## 📝 Changelog
+
+### Version 1.0.6 (Latest)
+- **NEW**: Added spectrum animation style with FFT frequency analysis
+- **NEW**: Real-time frequency domain visualization (bass/mid/treble separation)
+- **NEW**: Hanning window function for cleaner frequency analysis
+- **NEW**: Automatic frequency band normalization for consistent visualization
+- **ENHANCED**: Spectrum bars mirror top/bottom like other animation styles
+- **ENHANCED**: All existing settings (size, spacing, opacity_mode) work with spectrum mode
 
 ### Version 1.0.5
 - Added wave animation style with multiple layered sine patterns
