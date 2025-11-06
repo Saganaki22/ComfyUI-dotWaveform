@@ -1,84 +1,19 @@
 {
-  "id": "7dd5ba1c-7760-4a8f-818c-4e86db558e3d",
+  "id": "a4bfdf03-e57e-4ab7-8d24-36208d4da716",
   "revision": 0,
-  "last_node_id": 4,
-  "last_link_id": 4,
+  "last_node_id": 10,
+  "last_link_id": 29,
   "nodes": [
-    {
-      "id": 1,
-      "type": "DottedWaveformVisualizer",
-      "pos": [
-        931.0783081054688,
-        -127.89265441894531
-      ],
-      "size": [
-        272.61663818359375,
-        386
-      ],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "link": 1
-        }
-      ],
-      "outputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "links": [
-            2
-          ]
-        },
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "links": [
-            3
-          ]
-        },
-        {
-          "name": "fps_output",
-          "type": "FLOAT",
-          "links": [
-            4
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "ComfyUI-dotWaveform",
-        "ver": "e78eeecb81231f6029c10927829236d06e2386f8",
-        "Node name for S&R": "DottedWaveformVisualizer"
-      },
-      "widgets_values": [
-        720,
-        720,
-        6,
-        3,
-        "#00FFFF",
-        "#000000",
-        "spectrum",
-        75,
-        10,
-        0,
-        "uniform",
-        2,
-        false
-      ]
-    },
     {
       "id": 4,
       "type": "VHS_VideoCombine",
       "pos": [
-        1237.77001953125,
-        -130.7518768310547
+        1195.593505859375,
+        249.53807067871094
       ],
       "size": [
-        403.5539245605469,
-        731.553955078125
+        430.3791198730469,
+        482.49139404296875
       ],
       "flags": {},
       "order": 2,
@@ -87,13 +22,13 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 2
+          "link": 27
         },
         {
           "name": "audio",
           "shape": 7,
           "type": "AUDIO",
-          "link": 3
+          "link": 28
         },
         {
           "name": "meta_batch",
@@ -113,7 +48,7 @@
           "widget": {
             "name": "frame_rate"
           },
-          "link": 4
+          "link": 29
         }
       ],
       "outputs": [
@@ -125,41 +60,42 @@
       ],
       "properties": {
         "cnr_id": "comfyui-videohelpersuite",
-        "ver": "1.7.4",
-        "Node name for S&R": "VHS_VideoCombine"
+        "ver": "1.7.7",
+        "Node name for S&R": "VHS_VideoCombine",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
       },
       "widgets_values": {
         "frame_rate": 8,
         "loop_count": 0,
         "filename_prefix": "AnimateDiff",
-        "format": "video/h264-mp4",
-        "pix_fmt": "yuv420p",
-        "crf": 19,
-        "save_metadata": true,
-        "trim_to_audio": false,
+        "format": "image/gif",
         "pingpong": false,
-        "save_output": true,
+        "save_output": false,
         "videopreview": {
           "hidden": false,
           "paused": false,
           "params": {
-            "filename": "AnimateDiff_00029-audio.mp4",
+            "filename": "AnimateDiff_00049.gif",
             "subfolder": "",
-            "type": "output",
-            "format": "video/h264-mp4",
-            "frame_rate": 10,
-            "workflow": "AnimateDiff_00029.png",
-            "fullpath": "E:\\ComfyUI_windows_portable_nvidia\\ComfyUI_windows_portable\\ComfyUI\\output\\AnimateDiff_00029-audio.mp4"
+            "type": "temp",
+            "format": "image/gif",
+            "frame_rate": 12,
+            "workflow": "AnimateDiff_00049.png",
+            "fullpath": "E:\\ComfyUI_windows_portable_nvidia\\ComfyUI_windows_portable\\ComfyUI\\temp\\AnimateDiff_00049.gif"
           }
         }
       }
     },
     {
-      "id": 2,
+      "id": 5,
       "type": "LoadAudio",
       "pos": [
-        626.0022583007812,
-        -126.58616638183594
+        608.294189453125,
+        252.43084716796875
       ],
       "size": [
         274,
@@ -174,50 +110,152 @@
           "name": "AUDIO",
           "type": "AUDIO",
           "links": [
-            1
+            26
           ]
         }
       ],
       "properties": {
         "cnr_id": "comfy-core",
-        "ver": "0.3.57",
-        "Node name for S&R": "LoadAudio"
+        "ver": "0.3.64",
+        "Node name for S&R": "LoadAudio",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
       },
       "widgets_values": [
-        "0000_00003-audio.mp4",
+        "0000_00009.mp4",
         null,
-        ""
+        null
       ]
+    },
+    {
+      "id": 10,
+      "type": "DottedWaveformVisualizer",
+      "pos": [
+        887.6473388671875,
+        248.806640625
+      ],
+      "size": [
+        302.1100158691406,
+        482
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 26
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            27
+          ]
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            28
+          ]
+        },
+        {
+          "name": "fps_output",
+          "type": "FLOAT",
+          "links": [
+            29
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "DottedWaveformVisualizer",
+        "gradient_enabled": true,
+        "gradient_stops": [
+          {
+            "color": "#FF0000",
+            "position": 0
+          },
+          {
+            "color": "#FF8800",
+            "position": 0.5
+          },
+          {
+            "color": "#FFFF00",
+            "position": 1
+          }
+        ],
+        "amplitude_boost": 1.5,
+        "advanced_mode": true,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.4.1"
+        }
+      },
+      "widgets_values": [
+        1280,
+        720,
+        14,
+        20,
+        "#FF0066",
+        "#000000",
+        "scrolling",
+        40,
+        12,
+        300,
+        "10_levels",
+        true,
+        "[{\"color\":\"#FF0000\",\"position\":0},{\"color\":\"#FF8800\",\"position\":0.5},{\"color\":\"#FFFF00\",\"position\":1}]",
+        1.5,
+        true,
+        1,
+        false,
+        null,
+        false,
+        true,
+        1.5,
+        true,
+        1.5
+      ],
+      "color": "#1a1a2e",
+      "bgcolor": "#0f0f1e"
     }
   ],
   "links": [
     [
-      1,
-      2,
+      26,
+      5,
       0,
-      1,
+      10,
       0,
       "AUDIO"
     ],
     [
-      2,
-      1,
+      27,
+      10,
       0,
       4,
       0,
       "IMAGE"
     ],
     [
-      3,
-      1,
+      28,
+      10,
       1,
       4,
       1,
       "AUDIO"
     ],
     [
-      4,
-      1,
+      29,
+      10,
       2,
       4,
       4,
@@ -228,15 +266,15 @@
   "config": {},
   "extra": {
     "ue_links": [],
-    "links_added_by_ue": [],
     "ds": {
-      "scale": 0.6727499949326041,
+      "scale": 1.0152559799477106,
       "offset": [
-        487.3588307938628,
-        299.2698786612865
+        -164.1086223082525,
+        81.71405257529437
       ]
     },
-    "frontendVersion": "1.25.11",
+    "links_added_by_ue": [],
+    "frontendVersion": "1.27.10",
     "VHS_latentpreview": false,
     "VHS_latentpreviewrate": 0,
     "VHS_MetadataImage": true,
