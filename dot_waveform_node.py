@@ -23,6 +23,49 @@ def safe_hex_to_rgb(hex_color: str, fallback: Tuple[int, int, int] = (0, 255, 25
         return fallback
 
 
+def interpolate_gradient(gradient_stops: List[Dict], position: float) -> Tuple[int, int, int]:
+    """Interpolate color from gradient stops at given position (0-1)"""
+    if not gradient_stops or len(gradient_stops) == 0:
+        return (0, 255, 255)
+
+    if len(gradient_stops) == 1:
+        return hex_to_rgb(gradient_stops[0]['color'])
+
+    # Sort stops by position
+    sorted_stops = sorted(gradient_stops, key=lambda x: x['position'])
+
+    # Find surrounding stops
+    if position <= sorted_stops[0]['position']:
+        return hex_to_rgb(sorted_stops[0]['color'])
+    if position >= sorted_stops[-1]['position']:
+        return hex_to_rgb(sorted_stops[-1]['color'])
+
+    # Find the two stops to interpolate between
+    for i in range(len(sorted_stops) - 1):
+        if sorted_stops[i]['position'] <= position <= sorted_stops[i + 1]['position']:
+            start_stop = sorted_stops[i]
+            end_stop = sorted_stops[i + 1]
+
+            # Calculate interpolation factor
+            range_size = end_stop['position'] - start_stop['position']
+            if range_size == 0:
+                factor = 0
+            else:
+                factor = (position - start_stop['position']) / range_size
+
+            # Interpolate RGB values
+            start_color = hex_to_rgb(start_stop['color'])
+            end_color = hex_to_rgb(end_stop['color'])
+
+            r = int(start_color[0] + (end_color[0] - start_color[0]) * factor)
+            g = int(start_color[1] + (end_color[1] - start_color[1]) * factor)
+            b = int(start_color[2] + (end_color[2] - start_color[2]) * factor)
+
+            return (r, g, b)
+
+    return hex_to_rgb(sorted_stops[0]['color'])
+
+
 class DottedWaveformVisualizer:
     
     DESCRIPTION = "Creates animated dotted waveform visualizations from audio input with customizable appearance, colors, and animation styles"
@@ -86,8 +129,8 @@ class DottedWaveformVisualizer:
                     "tooltip": "Hex color for background. Examples: #000000 (black), #FFFFFF (white), #333333 (dark gray)"
                 }),
                 
-                "animation_style": (["scrolling", "breathing", "radial", "bars", "wave", "spectrum"], {
-                    "tooltip": "Choose animation style. SCROLLING: Continuous waveform. BREATHING: Pulsing dots. RADIAL: Expanding rings. BARS: Frequency bars. WAVE: Sine wave patterns. SPECTRUM: FFT frequency analysis bars (like equalizer)."
+                "animation_style": (["scrolling", "breathing", "radial", "bars", "wave", "spectrum", "circular"], {
+                    "tooltip": "Choose animation style. SCROLLING: Continuous waveform. BREATHING: Pulsing dots. RADIAL: Expanding rings. BARS: Frequency bars. WAVE: Sine wave patterns. SPECTRUM: FFT frequency analyzer. CIRCULAR: Rotating circle."
                 }),
                 "max_height": ("INT", {
                     "default": 60,
@@ -121,6 +164,11 @@ class DottedWaveformVisualizer:
                 }),
             },
             "optional": {
+                "gradient_enabled": ("BOOLEAN", {"default": False}),
+                "gradient_stops": ("STRING", {"default": "[]", "multiline": False}),
+                "amplitude_boost": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 5.0, "step": 0.1}),
+                "advanced_mode": ("BOOLEAN", {"default": False}),
+
                 "window_size": ("FLOAT", {
                     "default": 2.0,
                     "min": 0.1,
@@ -129,7 +177,7 @@ class DottedWaveformVisualizer:
                     "display": "slider",
                     "tooltip": "SCROLLING ONLY: Time window in seconds. How much audio timeline visible at once. Smaller = more detailed, larger = more overview."
                 }),
-                
+
                 "preview_mode": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Toggle ON for fast preview with sine wave pattern (no audio processing). Toggle OFF for normal audio-based animation."
@@ -514,18 +562,18 @@ class DottedWaveformVisualizer:
         img_array = np.clip(img_array * 255, 0, 255).astype(np.uint8)
         return Image.fromarray(img_array)
 
-    def generate_scrolling_animation(self, audio_np, sample_rate, width, height, size, spacing, 
-                                   max_height, fps, dot_color, bg_color, window_size, opacity_mode, max_frames):
+    def generate_scrolling_animation(self, audio_np, sample_rate, width, height, size, spacing,
+                                   max_height, fps, dot_color, bg_color, window_size, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
         frames = []
         audio_duration = len(audio_np) / sample_rate
         total_frames = int(audio_duration * fps)
-        
+
         if max_frames > 0:
             total_frames = min(total_frames, max_frames)
-        
+
         print(f"Generating {total_frames} frames...")
         pbar = ProgressBar(total_frames)
-        
+
         for frame_i in range(total_frames):
             if comfy.model_management.processing_interrupted():
                 print("Animation generation cancelled by user")
@@ -534,14 +582,15 @@ class DottedWaveformVisualizer:
             current_time = frame_i / fps
             img = Image.new('RGB', (width, height), bg_color)
             draw = ImageDraw.Draw(img)
-            
+
             center_y = height // 2
-            max_vis_height = (height * max_height) // 200
+            # Fixed: Changed from /200 to /100 and added amplitude_boost for better visibility
+            max_vis_height = int((height * max_height) / 100 * amplitude_boost)
             
             for x in range(spacing // 2, width, spacing):
                 time_offset = (x / width) * window_size - window_size / 2
                 sample_time = current_time + time_offset
-                
+
                 if 0 <= sample_time < audio_duration:
                     sample_idx = int(sample_time * sample_rate)
                     if sample_idx < len(audio_np):
@@ -550,123 +599,121 @@ class DottedWaveformVisualizer:
                         amplitude = 0.0
                 else:
                     amplitude = 0.0
-                
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    # Use position along width for gradient
+                    gradient_position = x / width
+                    current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_dot_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     base_opacity = 0.5
-                    
+
                     import random
                     time_quantized = int(sample_time * 50) / 50.0
                     audio_time_seed = int(time_quantized * 1000)
                     random.seed(audio_time_seed)
                     is_random_peak = random.random() < 0.25
-                    
+
                     if is_random_peak:
                         center_opacity = 1.0
                     elif amplitude > 0:
                         center_opacity = min(1.0, base_opacity + amplitude * 0.5)
                     else:
                         center_opacity = base_opacity
-                    
+
                     levels = 5 if opacity_mode == "5_levels" else 10
-                    center_color = self.get_discrete_opacity_color(dot_color, bg_color, center_opacity, levels)
+                    center_color = self.get_discrete_opacity_color(current_dot_color, bg_color, center_opacity, levels)
                 else:
-                    center_color = dot_color
+                    center_color = current_dot_color
                 
                 self.draw_dot(draw, x, center_y, size, center_color)
                 
                 max_dots_per_column = int(max_vis_height / (spacing * 0.8))
                 amplitude_dots_count = int(amplitude * max_dots_per_column)
-                
+
                 for i in range(amplitude_dots_count):
                     dot_offset = (i + 1) * (spacing * 0.8)
                     y_up = center_y - dot_offset
                     y_down = center_y + dot_offset
-                    
+
                     import random
                     random.seed(int((sample_time + i * 0.1) * 1000))
                     is_bright_spot = random.random() < 0.18
-                    
+
                     if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                         if is_bright_spot:
                             dot_opacity = 1.0
                         else:
                             distance_factor = 1.0 - (i / amplitude_dots_count) if amplitude_dots_count > 0 else 1.0
                             dot_opacity = max(0.3, distance_factor * 0.8)
-                        
+
                         levels = 5 if opacity_mode == "5_levels" else 10
-                        discrete_color = self.get_discrete_opacity_color(dot_color, bg_color, dot_opacity, levels)
+                        discrete_color = self.get_discrete_opacity_color(current_dot_color, bg_color, dot_opacity, levels)
                     else:
-                        discrete_color = dot_color
-                    
+                        discrete_color = current_dot_color
+
                     if y_up >= 0:
-                        self.draw_dot(draw, x, y_up, size, discrete_color)
+                        self.draw_dot(draw, x, int(y_up), size, discrete_color)
                     if y_down < height:
-                        self.draw_dot(draw, x, y_down, size, discrete_color)
+                        self.draw_dot(draw, x, int(y_down), size, discrete_color)
             
             frame_array = np.array(img).astype(np.float32) / 255.0
             frames.append(torch.from_numpy(frame_array).unsqueeze(0))
         
         return frames
 
-    def generate_breathing_animation(self, audio_np, sample_rate, width, height, size, spacing, 
-                                   max_height, fps, dot_color, bg_color, opacity_mode, max_frames):
+    def generate_breathing_animation(self, audio_np, sample_rate, width, height, size, spacing,
+                                   max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
         amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
-        
+
         if max_frames > 0:
             amplitude_frames = amplitude_frames[:max_frames]
-        
+
         frames = []
         total_frames = len(amplitude_frames)
         print(f"Generating {total_frames} breathing frames...")
         pbar = ProgressBar(total_frames)
-        
+
         for i, amplitude in enumerate(amplitude_frames):
             if comfy.model_management.processing_interrupted():
                 print("Breathing animation cancelled by user")
                 break
             pbar.update(1)
-            
+
             center_y = height // 2
-            max_vis_height = (height * max_height) // 200
-            
-            if opacity_mode in ["5_levels", "10_levels"]:
-                img = Image.new('RGB', (width, height), bg_color)
-                draw = ImageDraw.Draw(img)
-                
-                levels = 5 if opacity_mode == "5_levels" else 10
-                final_dot_color = self.get_discrete_opacity_color(dot_color, bg_color, amplitude, levels)
-                
-                should_draw_frame = (opacity_mode == "10_levels") or (final_dot_color != bg_color)
-                
-                if should_draw_frame:
-                    for x in range(spacing // 2, width, spacing):
-                        current_height = int(amplitude * max_vis_height)
-                        dots_count = current_height // spacing
-                        
-                        for j in range(dots_count):
-                            y_up = center_y - (j + 1) * spacing
-                            y_down = center_y + (j + 1) * spacing
-                            
-                            if y_up >= 0:
-                                self.draw_dot(draw, x, y_up, size, final_dot_color)
-                            if y_down < height:
-                                self.draw_dot(draw, x, y_down, size, final_dot_color)
-            else:
-                img = Image.new('RGB', (width, height), bg_color)
-                draw = ImageDraw.Draw(img)
-                
-                for x in range(spacing // 2, width, spacing):
-                    current_height = int(amplitude * max_vis_height)
-                    dots_count = current_height // spacing
-                    
-                    for j in range(dots_count):
-                        y_up = center_y - (j + 1) * spacing
-                        y_down = center_y + (j + 1) * spacing
-                        
-                        if y_up >= 0:
-                            self.draw_dot(draw, x, y_up, size, dot_color)
-                        if y_down < height:
-                            self.draw_dot(draw, x, y_down, size, dot_color)
+            max_vis_height = int((height * max_height) / 100 * amplitude_boost)  # Apply amplitude boost
+
+            img = Image.new('RGB', (width, height), bg_color)
+            draw = ImageDraw.Draw(img)
+
+            for x in range(spacing // 2, width, spacing):
+                current_height = int(amplitude * max_vis_height)
+                dots_count = current_height // spacing
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = x / width
+                    current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_dot_color = dot_color
+
+                for j in range(dots_count):
+                    y_up = center_y - (j + 1) * spacing
+                    y_down = center_y + (j + 1) * spacing
+
+                    if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                        levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                        final_color = self.get_discrete_opacity_color(current_dot_color, bg_color, amplitude, levels)
+                    else:
+                        final_color = current_dot_color
+
+                    if y_up >= 0:
+                        self.draw_dot(draw, x, y_up, size, final_color)
+                    if y_down < height:
+                        self.draw_dot(draw, x, y_down, size, final_color)
             
             frame_array = np.array(img).astype(np.float32) / 255.0
             frames.append(torch.from_numpy(frame_array).unsqueeze(0))
@@ -674,7 +721,7 @@ class DottedWaveformVisualizer:
         return frames
 
     def generate_radial_animation(self, audio_np, sample_rate, width, height, size, spacing, 
-                                max_height, fps, dot_color, bg_color, opacity_mode, max_frames):
+                                max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
         amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
         
         if max_frames > 0:
@@ -687,41 +734,45 @@ class DottedWaveformVisualizer:
         
         center_x, center_y = width // 2, height // 2
         max_possible_radius = min(width, height) // 2
-        max_radius = int(max_possible_radius * (max_height / 100.0))
-        
+        max_radius = int(max_possible_radius * (max_height / 100.0) * amplitude_boost)  # Apply amplitude boost
+
         for i, amplitude in enumerate(amplitude_frames):
             if comfy.model_management.processing_interrupted():
                 print("Radial animation cancelled by user")
                 break
             pbar.update(1)
             img = Image.new('RGB', (width, height), bg_color)
-            
+            draw = ImageDraw.Draw(img)
+
             ring_count = int(amplitude * max_radius / spacing)
-            
+
             for ring in range(ring_count):
                 radius = ring * spacing
                 circumference = 2 * math.pi * radius
                 dots_in_ring = max(1, int(circumference / spacing))
-                
-                if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
-                    ring_fade = (1.0 - ring / ring_count) if ring_count > 0 else 1.0
-                    ring_opacity = amplitude * ring_fade
-                    levels = 5 if opacity_mode == "5_levels" else 10
-                    discrete_color = self.get_discrete_opacity_color(dot_color, bg_color, ring_opacity, levels)
-                else:
-                    discrete_color = dot_color
-                
-                should_draw_ring = (opacity_mode == "10_levels") or (discrete_color != bg_color) or (opacity_mode == "uniform")
-                
-                if should_draw_ring:
-                    for i in range(dots_in_ring):
-                        angle = (2 * math.pi * i) / dots_in_ring
-                        x = int(center_x + radius * math.cos(angle))
-                        y = int(center_y + radius * math.sin(angle))
-                        
-                        if 0 <= x < width and 0 <= y < height:
-                            draw = ImageDraw.Draw(img)
-                            self.draw_dot(draw, x, y, size, discrete_color)
+
+                for dot_idx in range(dots_in_ring):
+                    angle = (2 * math.pi * dot_idx) / dots_in_ring
+                    x = int(center_x + radius * math.cos(angle))
+                    y = int(center_y + radius * math.sin(angle))
+
+                    if 0 <= x < width and 0 <= y < height:
+                        # Determine color (gradient or solid) - use angle for circular gradient
+                        if gradient_stops and len(gradient_stops) > 1:
+                            gradient_position = angle / (2 * math.pi)  # 0-1 around circle
+                            current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                        else:
+                            current_dot_color = dot_color
+
+                        if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                            ring_fade = (1.0 - ring / ring_count) if ring_count > 0 else 1.0
+                            ring_opacity = amplitude * ring_fade
+                            levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                            final_color = self.get_discrete_opacity_color(current_dot_color, bg_color, ring_opacity, levels)
+                        else:
+                            final_color = current_dot_color
+
+                        self.draw_dot(draw, x, y, size, final_color)
             
             frame_array = np.array(img).astype(np.float32) / 255.0
             frames.append(torch.from_numpy(frame_array).unsqueeze(0))
@@ -729,7 +780,7 @@ class DottedWaveformVisualizer:
         return frames
 
     def generate_bars_animation(self, audio_np, sample_rate, width, height, size, spacing, 
-                               max_height, fps, dot_color, bg_color, opacity_mode, max_frames):
+                               max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
         amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
         
         if max_frames > 0:
@@ -743,6 +794,8 @@ class DottedWaveformVisualizer:
         num_bars = width // spacing
         bar_heights = [0.0] * num_bars
         decay_factor = 0.85
+        # Apply amplitude boost to max_height calculation
+        boosted_max_height = int(max_height * amplitude_boost)
         attack_factor = 0.6
         
         for frame_i, amplitude in enumerate(amplitude_frames):
@@ -756,34 +809,39 @@ class DottedWaveformVisualizer:
             
             center_x = width // 2
             center_y = height // 2
-            max_vis_height = (height * max_height) // 200
+            max_vis_height = int((height * boosted_max_height) / 100)  # Use boosted max_height
             half_bars = num_bars // 2
-            
+
             for i in range(num_bars):
                 x = i * spacing + spacing // 2
-                
+
                 distance_from_center = abs(i - half_bars) / half_bars if half_bars > 0 else 0
                 bell_curve = math.exp(-4 * distance_from_center ** 2)
-                # Make max_height effect 2x stronger for bars animation
-                height_boost = 1.0 + (max_height / 100.0)  # Additional height boost based on max_height setting
-                target_amplitude = amplitude * bell_curve * height_boost
-                
+                target_amplitude = amplitude * bell_curve
+
                 if target_amplitude > bar_heights[i]:
                     bar_heights[i] = bar_heights[i] * attack_factor + target_amplitude * (1 - attack_factor)
                 else:
                     bar_heights[i] *= decay_factor
-                
+
                 bar_height = int(bar_heights[i] * max_vis_height)
-                
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = i / num_bars
+                    current_bar_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_bar_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, bar_heights[i], levels)
+                    bar_color = self.get_discrete_opacity_color(current_bar_color, bg_color, bar_heights[i], levels)
                 else:
-                    bar_color = dot_color
-                
+                    bar_color = current_bar_color
+
                 y_start = center_y - bar_height // 2
                 y_end = center_y + bar_height // 2
-                
+
                 if bar_height > 0:
                     draw.rectangle([x - size//2, y_start, x + size//2, y_end], fill=bar_color)
             
@@ -793,7 +851,7 @@ class DottedWaveformVisualizer:
         return frames
 
     def generate_spectrum_animation(self, audio_np, sample_rate, width, height, size, spacing, 
-                                  max_height, fps, dot_color, bg_color, opacity_mode, max_frames):
+                                  max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
         # Calculate number of frequency bands based on spacing
         num_bands = width // spacing
         if num_bands > 64:  # Cap at 64 bands for performance
@@ -812,8 +870,8 @@ class DottedWaveformVisualizer:
         pbar = ProgressBar(total_frames)
         
         center_y = height // 2
-        max_vis_height = (height * max_height) // 200
-        
+        max_vis_height = int((height * max_height) / 100 * amplitude_boost)  # Apply amplitude boost
+
         for frame_i, spectrum_data in enumerate(spectrum_frames):
             if comfy.model_management.processing_interrupted():
                 print("Spectrum animation cancelled by user")
@@ -837,12 +895,19 @@ class DottedWaveformVisualizer:
                 
                 # Calculate bar height
                 bar_height = int(amplitude * max_vis_height)
-                
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = band_idx / num_bands
+                    current_bar_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_bar_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, amplitude, levels)
+                    bar_color = self.get_discrete_opacity_color(current_bar_color, bg_color, amplitude, levels)
                 else:
-                    bar_color = dot_color
+                    bar_color = current_bar_color
                 
                 # Draw mirrored bars (top and bottom)
                 y_start_top = center_y - bar_height
@@ -869,82 +934,321 @@ class DottedWaveformVisualizer:
         
         return frames
 
-    def generate_wave_animation(self, audio_np, sample_rate, width, height, size, spacing, 
+    def generate_wave_animation(self, audio_np, sample_rate, width, height, size, spacing,
                               dot_color, bg_color, max_height, fps, max_frames, opacity_mode, **kwargs):
+        gradient_stops = kwargs.get('gradient_stops', None)
+        amplitude_boost = kwargs.get('amplitude_boost', 1.0)
+
         frames = []
-        max_vis_height = (height * max_height) // 200
-        
+        max_vis_height = int((height * max_height) / 100 * amplitude_boost)  # Apply amplitude boost
+
         frame_duration = len(audio_np) / sample_rate
         frame_count = min(int(frame_duration * fps), max_frames) if max_frames > 0 else int(frame_duration * fps)
-        
+
         num_waves = 3
-        wave_colors = [dot_color, dot_color, dot_color]
-        
+
         for frame_idx in range(frame_count):
             time_offset = (frame_idx / fps) if fps > 0 else 0
             sample_idx = int(time_offset * sample_rate)
-            
+
             if sample_idx < len(audio_np):
                 amplitude = abs(audio_np[sample_idx])
             else:
                 amplitude = 0
-            
+
             img = Image.new('RGB', (width, height), bg_color)
             draw = ImageDraw.Draw(img)
-            
+
             for wave_idx in range(num_waves):
                 wave_offset = wave_idx * math.pi * 0.5
                 wave_amplitude = amplitude * (0.8 - wave_idx * 0.2)
-                
+
                 for x in range(0, width, spacing):
                     wave_phase = (x / width) * 4 * math.pi + time_offset * 3 + wave_offset
                     y = height // 2 + math.sin(wave_phase) * max_vis_height * wave_amplitude
-                    
+
                     if 0 <= y < height:
                         local_amplitude = wave_amplitude * (0.5 + 0.5 * math.sin(wave_phase))
-                        
+
+                        # Determine color (gradient or solid)
+                        if gradient_stops and len(gradient_stops) > 1:
+                            gradient_position = x / width
+                            current_wave_color = interpolate_gradient(gradient_stops, gradient_position)
+                        else:
+                            current_wave_color = dot_color
+
                         if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                             levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                            point_color = self.get_discrete_opacity_color(wave_colors[wave_idx], bg_color, local_amplitude, levels)
+                            point_color = self.get_discrete_opacity_color(current_wave_color, bg_color, local_amplitude, levels)
                         else:
-                            point_color = wave_colors[wave_idx]
-                        
-                        draw.ellipse([x-size//2, y-size//2, x+size//2, y+size//2], fill=point_color)
+                            point_color = current_wave_color
+
+                        draw.ellipse([x-size//2, int(y)-size//2, x+size//2, int(y)+size//2], fill=point_color)
             
             frame_array = np.array(img).astype(np.float32) / 255.0
             frames.append(torch.from_numpy(frame_array).unsqueeze(0))
         
         return frames
 
+    def generate_circular_animation(self, audio_np, sample_rate, width, height, size, spacing,
+                                   max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
+        """Circular waveform that rotates around center"""
+        amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
 
-    def generate_preview(self, width, height, size, spacing, 
-                        dot_color, bg_color, animation_style, max_height, opacity_mode, window_size):
-        
+        if max_frames > 0:
+            amplitude_frames = amplitude_frames[:max_frames]
+
+        frames = []
+        total_frames = len(amplitude_frames)
+        print(f"Generating {total_frames} circular frames...")
+        pbar = ProgressBar(total_frames)
+
+        center_x, center_y = width // 2, height // 2
+        max_radius = min(width, height) // 3
+        base_radius = max_radius * 0.5
+
+        for frame_i, amplitude in enumerate(amplitude_frames):
+            if comfy.model_management.processing_interrupted():
+                print("Circular animation cancelled by user")
+                break
+            pbar.update(1)
+
+            img = Image.new('RGB', (width, height), bg_color)
+            draw = ImageDraw.Draw(img)
+
+            # Rotation angle based on frame
+            rotation = (frame_i / fps) * math.pi * 0.5
+
+            # Number of dots around circle
+            num_dots = int((2 * math.pi * max_radius) / spacing)
+
+            for i in range(num_dots):
+                angle = (2 * math.pi * i / num_dots) + rotation
+                radius = base_radius + (amplitude * max_radius * 0.5 * amplitude_boost)
+
+                x = int(center_x + radius * math.cos(angle))
+                y = int(center_y + radius * math.sin(angle))
+
+                if 0 <= x < width and 0 <= y < height:
+                    # Gradient support
+                    if gradient_stops and len(gradient_stops) > 1:
+                        gradient_position = i / num_dots
+                        current_color = interpolate_gradient(gradient_stops, gradient_position)
+                    else:
+                        current_color = dot_color
+
+                    if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                        levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                        dot_opacity = amplitude
+                        final_color = self.get_discrete_opacity_color(current_color, bg_color, dot_opacity, levels)
+                    else:
+                        final_color = current_color
+
+                    self.draw_dot(draw, x, y, size, final_color)
+
+            frame_array = np.array(img).astype(np.float32) / 255.0
+            frames.append(torch.from_numpy(frame_array).unsqueeze(0))
+
+        return frames
+
+    def generate_spiral_animation(self, audio_np, sample_rate, width, height, size, spacing,
+                                  max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
+        """Spiral pattern that expands/contracts with audio"""
+        amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
+
+        if max_frames > 0:
+            amplitude_frames = amplitude_frames[:max_frames]
+
+        frames = []
+        total_frames = len(amplitude_frames)
+        print(f"Generating {total_frames} spiral frames...")
+        pbar = ProgressBar(total_frames)
+
+        center_x, center_y = width // 2, height // 2
+        max_radius = min(width, height) // 2
+
+        for frame_i, amplitude in enumerate(amplitude_frames):
+            if comfy.model_management.processing_interrupted():
+                print("Spiral animation cancelled by user")
+                break
+            pbar.update(1)
+
+            img = Image.new('RGB', (width, height), bg_color)
+            draw = ImageDraw.Draw(img)
+
+            # Spiral parameters
+            rotation_offset = (frame_i / fps) * math.pi
+            num_spirals = 3
+            points_per_spiral = 200
+
+            for spiral_idx in range(num_spirals):
+                spiral_offset = (2 * math.pi * spiral_idx) / num_spirals
+
+                for point_idx in range(points_per_spiral):
+                    t = point_idx / points_per_spiral
+                    angle = t * 4 * math.pi + rotation_offset + spiral_offset
+                    radius = t * max_radius * (0.5 + amplitude * 0.5 * amplitude_boost)
+
+                    x = int(center_x + radius * math.cos(angle))
+                    y = int(center_y + radius * math.sin(angle))
+
+                    if 0 <= x < width and 0 <= y < height:
+                        # Gradient support
+                        if gradient_stops and len(gradient_stops) > 1:
+                            gradient_position = t
+                            current_color = interpolate_gradient(gradient_stops, gradient_position)
+                        else:
+                            current_color = dot_color
+
+                        if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                            levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                            dot_opacity = t * amplitude
+                            final_color = self.get_discrete_opacity_color(current_color, bg_color, dot_opacity, levels)
+                        else:
+                            final_color = current_color
+
+                        if point_idx % max(1, int(5 / (amplitude + 0.1))) == 0:  # Sparse dots
+                            self.draw_dot(draw, x, y, size, final_color)
+
+            frame_array = np.array(img).astype(np.float32) / 255.0
+            frames.append(torch.from_numpy(frame_array).unsqueeze(0))
+
+        return frames
+
+    def generate_particles_animation(self, audio_np, sample_rate, width, height, size, spacing,
+                                    max_height, fps, dot_color, bg_color, opacity_mode, max_frames, gradient_stops=None, amplitude_boost=1.0):
+        """Particle system that reacts to audio"""
+        amplitude_frames = self.analyze_audio(audio_np, sample_rate, fps)
+
+        if max_frames > 0:
+            amplitude_frames = amplitude_frames[:max_frames]
+
+        frames = []
+        total_frames = len(amplitude_frames)
+        print(f"Generating {total_frames} particle frames...")
+        pbar = ProgressBar(total_frames)
+
+        # Initialize particles
+        num_particles = (width * height) // (spacing * spacing * 4)
+        particles = []
+        import random
+
+        for i in range(num_particles):
+            particles.append({
+                'x': random.uniform(0, width),
+                'y': random.uniform(0, height),
+                'vx': random.uniform(-1, 1),
+                'vy': random.uniform(-1, 1),
+                'age': random.uniform(0, 1)
+            })
+
+        for frame_i, amplitude in enumerate(amplitude_frames):
+            if comfy.model_management.processing_interrupted():
+                print("Particles animation cancelled by user")
+                break
+            pbar.update(1)
+
+            img = Image.new('RGB', (width, height), bg_color)
+            draw = ImageDraw.Draw(img)
+
+            # Update particles
+            energy = amplitude * amplitude_boost * 5
+            center_x, center_y = width // 2, height // 2
+
+            for particle in particles:
+                # Attract to center
+                dx = center_x - particle['x']
+                dy = center_y - particle['y']
+                dist = math.sqrt(dx*dx + dy*dy) + 1
+
+                # Add energy-based movement
+                particle['vx'] += (dx / dist) * 0.1 * energy + random.uniform(-0.5, 0.5)
+                particle['vy'] += (dy / dist) * 0.1 * energy + random.uniform(-0.5, 0.5)
+
+                # Apply damping
+                particle['vx'] *= 0.95
+                particle['vy'] *= 0.95
+
+                # Update position
+                particle['x'] += particle['vx']
+                particle['y'] += particle['vy']
+
+                # Wrap around screen
+                if particle['x'] < 0:
+                    particle['x'] = width
+                elif particle['x'] > width:
+                    particle['x'] = 0
+                if particle['y'] < 0:
+                    particle['y'] = height
+                elif particle['y'] > height:
+                    particle['y'] = 0
+
+                # Age particle
+                particle['age'] = (particle['age'] + 0.01) % 1.0
+
+                # Draw particle
+                x, y = int(particle['x']), int(particle['y'])
+                if 0 <= x < width and 0 <= y < height:
+                    # Gradient support
+                    if gradient_stops and len(gradient_stops) > 1:
+                        gradient_position = particle['age']
+                        current_color = interpolate_gradient(gradient_stops, gradient_position)
+                    else:
+                        current_color = dot_color
+
+                    if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                        levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                        dot_opacity = amplitude * (1.0 - particle['age'] * 0.5)
+                        final_color = self.get_discrete_opacity_color(current_color, bg_color, dot_opacity, levels)
+                    else:
+                        final_color = current_color
+
+                    self.draw_dot(draw, x, y, size, final_color)
+
+            frame_array = np.array(img).astype(np.float32) / 255.0
+            frames.append(torch.from_numpy(frame_array).unsqueeze(0))
+
+        return frames
+
+
+    def generate_preview(self, width, height, size, spacing,
+                        dot_color, bg_color, animation_style, max_height, opacity_mode, window_size,
+                        gradient_stops=None, amplitude_boost=1.0):
+
         preview_img = Image.new('RGB', (width, height), bg_color)
         draw = ImageDraw.Draw(preview_img)
-        
+
         center_y = height // 2
-        max_vis_height = (height * max_height) // 200
-        
+        max_vis_height = int((height * max_height) / 100 * amplitude_boost)
+
         if animation_style == "scrolling":
+            # Use window_size to affect wave frequency in preview
+            wave_frequency = 3 * (2.0 / window_size)  # Inverse relationship: smaller window = more detail = higher frequency
             for x in range(spacing // 2, width, spacing):
                 normalized_x = x / width
-                fake_amplitude = 0.3 + 0.7 * abs(math.sin(normalized_x * math.pi * 3))
-                
+                fake_amplitude = 0.3 + 0.7 * abs(math.sin(normalized_x * math.pi * wave_frequency))
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = x / width
+                    current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_dot_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     import random
                     random.seed(x)
                     is_random_peak = random.random() < 0.15
-                    
+
                     if is_random_peak:
                         center_opacity = 1.0
                     else:
                         center_opacity = 0.5 + fake_amplitude * 0.3
-                    
+
                     levels = 5 if opacity_mode == "5_levels" else 10
-                    center_color = self.get_discrete_opacity_color(dot_color, bg_color, center_opacity, levels)
+                    center_color = self.get_discrete_opacity_color(current_dot_color, bg_color, center_opacity, levels)
                 else:
-                    center_color = dot_color
+                    center_color = current_dot_color
                 
                 self.draw_dot(draw, x, center_y, size, center_color)
                 
@@ -952,17 +1256,17 @@ class DottedWaveformVisualizer:
                 for i in range(max_dots_per_column):
                     y_up = center_y - (i + 1) * spacing
                     y_down = center_y + (i + 1) * spacing
-                    
+
                     threshold = (i + 1) / max_dots_per_column
                     if fake_amplitude >= threshold:
                         if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                             excess = (fake_amplitude - threshold) / (1.0 - threshold) if threshold < 1.0 else 1.0
                             dot_opacity = max(0.1, excess)
                             levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                            discrete_color = self.get_discrete_opacity_color(dot_color, bg_color, dot_opacity, levels)
+                            discrete_color = self.get_discrete_opacity_color(current_dot_color, bg_color, dot_opacity, levels)
                         else:
-                            discrete_color = dot_color
-                        
+                            discrete_color = current_dot_color
+
                         if y_up >= 0:
                             self.draw_dot(draw, x, y_up, size, discrete_color)
                         if y_down < height:
@@ -970,21 +1274,28 @@ class DottedWaveformVisualizer:
                             
         elif animation_style == "breathing":
             fake_amplitude = 0.6
-            
-            if opacity_mode in ["5_levels", "10_levels"]:
-                levels = 5 if opacity_mode == "5_levels" else 10
-                preview_color = self.get_discrete_opacity_color(dot_color, bg_color, fake_amplitude, levels)
-            else:
-                preview_color = dot_color
-            
+
             for x in range(spacing // 2, width, spacing):
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = x / width
+                    current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_dot_color = dot_color
+
+                if opacity_mode in ["5_levels", "10_levels"]:
+                    levels = 5 if opacity_mode == "5_levels" else 10
+                    preview_color = self.get_discrete_opacity_color(current_dot_color, bg_color, fake_amplitude, levels)
+                else:
+                    preview_color = current_dot_color
+
                 current_height = int(fake_amplitude * max_vis_height)
                 dots_count = current_height // spacing
-                
+
                 for j in range(dots_count):
                     y_up = center_y - (j + 1) * spacing
                     y_down = center_y + (j + 1) * spacing
-                    
+
                     if y_up >= 0:
                         self.draw_dot(draw, x, y_up, size, preview_color)
                     if y_down < height:
@@ -995,7 +1306,7 @@ class DottedWaveformVisualizer:
             center_x = width // 2
             num_bars = width // spacing
             half_bars = num_bars // 2
-            
+
             for i in range(num_bars):
                 x = i * spacing + spacing // 2
                 distance_from_center = abs(i - half_bars) / half_bars if half_bars > 0 else 0
@@ -1003,15 +1314,22 @@ class DottedWaveformVisualizer:
                 # Apply same 2x height boost to preview
                 height_boost = 1.0 + (max_height / 100.0)
                 bar_amplitude = fake_amplitude * bell_curve * height_boost
-                
+
                 bar_height = int(bar_amplitude * max_vis_height)
-                
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = i / num_bars
+                    current_bar_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_bar_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, bar_amplitude, levels)
+                    bar_color = self.get_discrete_opacity_color(current_bar_color, bg_color, bar_amplitude, levels)
                 else:
-                    bar_color = dot_color
-                
+                    bar_color = current_bar_color
+
                 y_start = center_y - bar_height // 2
                 y_end = center_y + bar_height // 2
                 
@@ -1019,28 +1337,33 @@ class DottedWaveformVisualizer:
         
         elif animation_style == "wave":
             fake_amplitude = 0.6
-            max_vis_height = (height * max_height) // 200
-            
+
             num_waves = 3
-            wave_colors = [dot_color, dot_color, dot_color]
-            
+
             for wave_idx in range(num_waves):
                 wave_offset = wave_idx * math.pi * 0.5
                 wave_amplitude = fake_amplitude * (0.8 - wave_idx * 0.2)
-                
+
                 for x in range(0, width, spacing):
                     wave_phase = (x / width) * 4 * math.pi + wave_offset
                     y = height // 2 + math.sin(wave_phase) * max_vis_height * wave_amplitude
-                    
+
                     if 0 <= y < height:
                         local_amplitude = wave_amplitude * (0.5 + 0.5 * math.sin(wave_phase))
-                        
+
+                        # Determine color (gradient or solid)
+                        if gradient_stops and len(gradient_stops) > 1:
+                            gradient_position = x / width
+                            current_wave_color = interpolate_gradient(gradient_stops, gradient_position)
+                        else:
+                            current_wave_color = dot_color
+
                         if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                             levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                            point_color = self.get_discrete_opacity_color(wave_colors[wave_idx], bg_color, local_amplitude, levels)
+                            point_color = self.get_discrete_opacity_color(current_wave_color, bg_color, local_amplitude, levels)
                         else:
-                            point_color = wave_colors[wave_idx]
-                        
+                            point_color = current_wave_color
+
                         draw.ellipse([x-size//2, y-size//2, x+size//2, y+size//2], fill=point_color)
         
         elif animation_style == "spectrum":
@@ -1057,29 +1380,35 @@ class DottedWaveformVisualizer:
                 normalized_freq = band / num_bands
                 if normalized_freq < 0.3:  # Bass frequencies
                     amplitude = 0.8 - (normalized_freq * 0.4)
-                elif normalized_freq < 0.7:  # Mid frequencies  
+                elif normalized_freq < 0.7:  # Mid frequencies
                     amplitude = 0.4 + 0.4 * math.sin(normalized_freq * math.pi * 4)
                 else:  # Treble frequencies
                     amplitude = 0.3 * (1.0 - normalized_freq)
                 fake_spectrum.append(amplitude)
-            
+
             center_y = height // 2
-            max_vis_height = (height * max_height) // 200
             bar_width = width // num_bands
-            
+
             for band_idx in range(num_bands):
                 amplitude = fake_spectrum[band_idx]
                 x = (band_idx * bar_width) + (bar_width // 2)
                 if x >= width:
                     break
-                
+
                 bar_height = int(amplitude * max_vis_height)
-                
+
+                # Determine color (gradient or solid)
+                if gradient_stops and len(gradient_stops) > 1:
+                    gradient_position = band_idx / num_bands
+                    current_bar_color = interpolate_gradient(gradient_stops, gradient_position)
+                else:
+                    current_bar_color = dot_color
+
                 if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
                     levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
-                    bar_color = self.get_discrete_opacity_color(dot_color, bg_color, amplitude, levels)
+                    bar_color = self.get_discrete_opacity_color(current_bar_color, bg_color, amplitude, levels)
                 else:
-                    bar_color = dot_color
+                    bar_color = current_bar_color
                 
                 if bar_height > 0:
                     bar_thickness = max(1, min(size, bar_width))
@@ -1096,92 +1425,177 @@ class DottedWaveformVisualizer:
                         draw.rectangle([x_left, y_start_top, x_right, y_end_top], fill=bar_color)
                     if y_end_bottom < height:
                         draw.rectangle([x_left, y_start_bottom, x_right, y_end_bottom], fill=bar_color)
-                        
+
+        elif animation_style == "circular":
+            # Preview circular animation
+            fake_amplitude = 0.7
+            center_x, center_y = width // 2, height // 2
+            max_radius = min(width, height) // 3
+            base_radius = max_radius * 0.5
+            radius = base_radius + (fake_amplitude * max_radius * 0.5)
+
+            num_dots = int((2 * math.pi * radius) / spacing)
+
+            for i in range(num_dots):
+                angle = (2 * math.pi * i / num_dots)
+                x = int(center_x + radius * math.cos(angle))
+                y = int(center_y + radius * math.sin(angle))
+
+                if 0 <= x < width and 0 <= y < height:
+                    # Determine color (gradient or solid)
+                    if gradient_stops and len(gradient_stops) > 1:
+                        gradient_position = angle / (2 * math.pi)
+                        current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                    else:
+                        current_dot_color = dot_color
+
+                    if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                        levels = 3 if opacity_mode == "3_levels" else (5 if opacity_mode == "5_levels" else 10)
+                        point_color = self.get_discrete_opacity_color(current_dot_color, bg_color, fake_amplitude, levels)
+                    else:
+                        point_color = current_dot_color
+
+                    self.draw_dot(draw, x, y, size, point_color)
+
         else:
+            # Default radial pattern for unknown styles
             center_x = width // 2
             max_possible_radius = min(width, height) // 2
             max_radius = int(max_possible_radius * (max_height / 100.0))
             fake_amplitude = 0.7
             
             ring_count = int(fake_amplitude * max_radius / spacing)
-            
+
             for ring in range(ring_count):
                 radius = ring * spacing
                 circumference = 2 * math.pi * radius
                 dots_in_ring = max(1, int(circumference / spacing))
-                
-                if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
-                    ring_fade = (1.0 - ring / ring_count) if ring_count > 0 else 1.0
-                    ring_opacity = fake_amplitude * ring_fade
-                    levels = 5 if opacity_mode == "5_levels" else 10
-                    discrete_color = self.get_discrete_opacity_color(dot_color, bg_color, ring_opacity, levels)
-                else:
-                    discrete_color = dot_color
-                
+
                 for i in range(dots_in_ring):
                     angle = (2 * math.pi * i) / dots_in_ring
                     x = int(center_x + radius * math.cos(angle))
                     y = int(center_y + radius * math.sin(angle))
-                    
+
                     if 0 <= x < width and 0 <= y < height:
+                        # Determine color (gradient or solid)
+                        if gradient_stops and len(gradient_stops) > 1:
+                            gradient_position = angle / (2 * math.pi)
+                            current_dot_color = interpolate_gradient(gradient_stops, gradient_position)
+                        else:
+                            current_dot_color = dot_color
+
+                        if opacity_mode in ["3_levels", "5_levels", "10_levels"]:
+                            ring_fade = (1.0 - ring / ring_count) if ring_count > 0 else 1.0
+                            ring_opacity = fake_amplitude * ring_fade
+                            levels = 5 if opacity_mode == "5_levels" else 10
+                            discrete_color = self.get_discrete_opacity_color(current_dot_color, bg_color, ring_opacity, levels)
+                        else:
+                            discrete_color = current_dot_color
+
                         self.draw_dot(draw, x, y, size, discrete_color)
         
         preview_array = np.array(preview_img).astype(np.float32) / 255.0
         return torch.from_numpy(preview_array).unsqueeze(0)
 
 
-    def generate_waveform(self, audio, width, height, size, spacing, 
+    def generate_waveform(self, audio, width, height, size, spacing,
                          dot_color, background_color, animation_style, max_height, fps, max_frames, opacity_mode, **kwargs):
-        
+
         try:
             # CRITICAL: Store the EXACT original audio object - don't modify it at all
             # This preserves the tensor references, device placement, and ComfyUI format
             original_audio_passthrough = audio
-            
+
             window_size = kwargs.get('window_size', 2.0)
             preview_mode = kwargs.get('preview_mode', False)
-            
+
+            # Extract gradient and amplitude boost from extra_pnginfo or properties
+            # These are injected by the JS frontend
+            gradient_enabled = kwargs.get('gradient_enabled', False)
+            gradient_stops_str = kwargs.get('gradient_stops', None)
+            amplitude_boost = kwargs.get('amplitude_boost', 1.0)
+
+            # Parse gradient stops from JSON string
+            gradient_stops = None
+            if gradient_stops_str:
+                try:
+                    import json
+                    gradient_stops = json.loads(gradient_stops_str) if isinstance(gradient_stops_str, str) else gradient_stops_str
+                    print(f"✅ Gradient stops loaded: {gradient_stops}")
+                except Exception as e:
+                    print(f"⚠️ Failed to parse gradient stops: {e}")
+                    gradient_stops = None
+
+            print(f"🎨 Gradient enabled: {gradient_enabled}, Amplitude boost: {amplitude_boost}")
+            if gradient_stops:
+                print(f"🌈 Gradient stops: {gradient_stops}")
+
             if window_size <= 0.0:
                 window_size = 2.0
             elif window_size < 0.5:
                 window_size = 0.5
-            
+
             final_color = safe_hex_to_rgb(dot_color, (0, 255, 255))
             final_bg_color = safe_hex_to_rgb(background_color, (0, 0, 0))
-            
+
+            # Use gradient if enabled - GRADIENT TAKES PRIORITY
+            final_gradient_stops = None
+            if gradient_enabled and gradient_stops and len(gradient_stops) > 0:
+                final_gradient_stops = gradient_stops
+                print(f"✅ USING GRADIENT with {len(gradient_stops)} stops")
+            else:
+                print(f"ℹ️ Using solid color: {final_color}")
+
             if preview_mode:
-                preview_image = self.generate_preview(width, height, size, spacing, 
-                                                    final_color, final_bg_color, animation_style, 
-                                                    max_height, opacity_mode, window_size)
+                preview_image = self.generate_preview(width, height, size, spacing,
+                                                    final_color, final_bg_color, animation_style,
+                                                    max_height, opacity_mode, window_size,
+                                                    gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
                 return (preview_image, original_audio_passthrough, float(fps))
-            
+
             audio_np, sample_rate = self.load_audio_with_fallback(audio)
-            
+
             if animation_style == "scrolling":
-                frames = self.generate_scrolling_animation(audio_np, sample_rate, width, height, 
+                frames = self.generate_scrolling_animation(audio_np, sample_rate, width, height,
                                                          size, spacing, max_height, fps,
-                                                         final_color, final_bg_color, window_size, opacity_mode, max_frames)
+                                                         final_color, final_bg_color, window_size, opacity_mode, max_frames,
+                                                         gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             elif animation_style == "breathing":
                 frames = self.generate_breathing_animation(audio_np, sample_rate, width, height,
                                                          size, spacing, max_height, fps,
-                                                         final_color, final_bg_color, opacity_mode, max_frames)
+                                                         final_color, final_bg_color, opacity_mode, max_frames,
+                                                         gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
+            elif animation_style == "radial":
+                frames = self.generate_radial_animation(audio_np, sample_rate, width, height,
+                                                      size, spacing, max_height, fps,
+                                                      final_color, final_bg_color, opacity_mode, max_frames,
+                                                      gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             elif animation_style == "bars":
                 frames = self.generate_bars_animation(audio_np, sample_rate, width, height,
                                                     size, spacing, max_height, fps,
-                                                    final_color, final_bg_color, opacity_mode, max_frames)
+                                                    final_color, final_bg_color, opacity_mode, max_frames,
+                                                    gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             elif animation_style == "wave":
                 frames = self.generate_wave_animation(audio_np, sample_rate, width, height,
-                                                    size, spacing, final_color, final_bg_color, 
-                                                    max_height, fps, max_frames, opacity_mode)
+                                                    size, spacing, final_color, final_bg_color,
+                                                    max_height, fps, max_frames, opacity_mode,
+                                                    gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             elif animation_style == "spectrum":
                 frames = self.generate_spectrum_animation(audio_np, sample_rate, width, height,
                                                         size, spacing, max_height, fps,
-                                                        final_color, final_bg_color, opacity_mode, max_frames)
+                                                        final_color, final_bg_color, opacity_mode, max_frames,
+                                                        gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
+            elif animation_style == "circular":
+                frames = self.generate_circular_animation(audio_np, sample_rate, width, height,
+                                                        size, spacing, max_height, fps,
+                                                        final_color, final_bg_color, opacity_mode, max_frames,
+                                                        gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             else:
                 # Default to radial for backwards compatibility
                 frames = self.generate_radial_animation(audio_np, sample_rate, width, height,
                                                       size, spacing, max_height, fps,
-                                                      final_color, final_bg_color, opacity_mode, max_frames)
+                                                      final_color, final_bg_color, opacity_mode, max_frames,
+                                                      gradient_stops=final_gradient_stops, amplitude_boost=amplitude_boost)
             
             if frames:
                 output_images = torch.cat(frames, dim=0)
