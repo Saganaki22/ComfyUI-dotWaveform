@@ -1,7 +1,6 @@
 # ComfyUI Dotted Waveform Visualizer 🎵
 
 [![GitHub Stars](https://img.shields.io/github/stars/Saganaki22/ComfyUI-dotWaveform?style=for-the-badge&logo=github)](https://github.com/Saganaki22/ComfyUI-dotWaveform/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/Saganaki22/ComfyUI-dotWaveform?style=for-the-badge&logo=github)](https://github.com/Saganaki22/ComfyUI-dotWaveform/issues)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge&logo=python)](https://python.org)
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen?style=for-the-badge)](https://github.com/comfyanonymous/ComfyUI)
 
