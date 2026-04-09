@@ -1,0 +1,12 @@
+{
+  "name": "comfyui-dotwaveform",
+  "version": "2.2.0",
+  "private": true,
+  "description": "Dotted Waveform Visualizer for ComfyUI",
+  "scripts": {
+    "build": "rollup -c rollup.config.mjs"
+  },
+  "devDependencies": {
+    "rollup": "^4.9.0"
+  }
+}
